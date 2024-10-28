@@ -1,8 +1,11 @@
-import boto3
 from django.conf import settings
 from django.http import JsonResponse
 from .utils import importar_dados_csv
+from rest_framework.decorators import api_view
+from .serializers import MunicipioQueimadaSerializer
+from .models import MunicipioQueimada
 import pandas as pd
+import boto3
 import time
 
 # Função para conectar ao DynamoDB
@@ -57,3 +60,33 @@ def processar_csv_e_inserir_dados(request):
     
     except Exception as e:
         return JsonResponse({'status': 'Erro', 'mensagem': str(e)})
+
+# views.py
+# views.py
+@api_view(['GET'])
+def listar_dados_dynamodb(request):
+    dynamodb = conectar_dynamodb()
+    table = dynamodb.Table('Queimadas')
+
+    response = table.scan()
+    items = response.get('Items', [])
+
+    # Ajustar o formato dos itens para o serializer
+    dados_convertidos = []
+    for item in items:
+        dados_convertidos.append({
+            'ID': item.get('ID'),  # Mapeia 'ID' para 'id'
+            'Estado': item.get('Estado'),
+            'Municipio': item.get('Municipio'),
+            'DataHora': item.get('DataHora'),
+            'Bioma': item.get('Bioma'),
+            'Latitude': item.get('Latitude'),
+            'Longitude': item.get('Longitude'),
+            'FRP': item.get('FRP'),
+            'Precipita': item.get('Precipita'),
+            'DiasSemChuva': item.get('DiasSemChuva')
+        })
+
+    serializer = MunicipioQueimadaSerializer(dados_convertidos, many=True)
+    return JsonResponse(serializer.data, safe=False)
+

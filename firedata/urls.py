@@ -1,7 +1,8 @@
 # firedata/urls.py
 from django.urls import path
-from .views import processar_csv_e_inserir_dados
+from . import views
 
 urlpatterns = [
-    path('inserir-dados/', processar_csv_e_inserir_dados, name='inserir-dados'),
+    path('inserir-dados/', views.processar_csv_e_inserir_dados, name='inserir-dados'),
+    path('api/queimadas/', views.listar_dados_dynamodb, name='listar_dados_dynamodb'),
 ]
