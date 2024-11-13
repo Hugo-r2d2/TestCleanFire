@@ -7,6 +7,7 @@ from .models import MunicipioQueimada
 import pandas as pd
 import boto3
 import time
+from collections import defaultdict
 
 # Função para conectar ao DynamoDB
 def conectar_dynamodb():
@@ -20,7 +21,7 @@ def conectar_dynamodb():
 # Função para inserir dados no DynamoDB
 def inserir_dados_no_dynamodb(df):
     dynamodb = conectar_dynamodb()
-    table = dynamodb.Table('Queimadas')
+    table = dynamodb.Table('AMQ')
 
     # Ordenar DataFrame pelo campo ID
     df = df.sort_values(by='ID')
@@ -61,32 +62,88 @@ def processar_csv_e_inserir_dados(request):
     except Exception as e:
         return JsonResponse({'status': 'Erro', 'mensagem': str(e)})
 
-# views.py
-# views.py
+# View para listar dados do DynamoDB
 @api_view(['GET'])
 def listar_dados_dynamodb(request):
     dynamodb = conectar_dynamodb()
-    table = dynamodb.Table('Queimadas')
+    table = dynamodb.Table('AMQ')
 
-    response = table.scan()
-    items = response.get('Items', [])
+    try:
+        response = table.scan()
+        items = response.get('Items', [])
 
-    # Ajustar o formato dos itens para o serializer
-    dados_convertidos = []
-    for item in items:
-        dados_convertidos.append({
-            'ID': item.get('ID'),  # Mapeia 'ID' para 'id'
-            'Estado': item.get('Estado'),
-            'Municipio': item.get('Municipio'),
-            'DataHora': item.get('DataHora'),
-            'Bioma': item.get('Bioma'),
-            'Latitude': item.get('Latitude'),
-            'Longitude': item.get('Longitude'),
-            'FRP': item.get('FRP'),
-            'Precipita': item.get('Precipita'),
-            'DiasSemChuva': item.get('DiasSemChuva')
-        })
+        # Ajustar o formato dos itens para o serializer
+        dados_convertidos = []
+        for item in items:
+            try:
+                # Substituir vírgulas por pontos e converter para float nos campos necessários
+                latitude = float(item.get('Latitude', '0').replace(',', '.'))
+                longitude = float(item.get('Longitude', '0').replace(',', '.'))
+                frp = float(item.get('FRP', '0').replace(',', '.')) if item.get('FRP') else None
+                precipita = float(item.get('Precipita', '0').replace(',', '.')) if item.get('Precipita') else None
+            except (ValueError, AttributeError):
+                latitude = None
+                longitude = None
+                frp = None
+                precipita = None
 
-    serializer = MunicipioQueimadaSerializer(dados_convertidos, many=True)
-    return JsonResponse(serializer.data, safe=False)
+            try:
+                # Converter DiasSemChuva para int, caso possível
+                dias_sem_chuva = int(float(item.get('DiasSemChuva', '0')))
+            except (ValueError, TypeError):
+                dias_sem_chuva = None
+            
+            dados_convertidos.append({
+                'ID': item.get('ID'),
+                'Estado': item.get('Estado'),
+                'Municipio': item.get('Municipio'),
+                'DataHora': item.get('DataHora'),
+                'Bioma': item.get('Bioma'),
+                'Latitude': latitude,  # Latitude convertida
+                'Longitude': longitude,  # Longitude convertida
+                'FRP': frp,  # FRP convertido
+                'Precipita': precipita,  # Precipitação convertida
+                'DiasSemChuva': dias_sem_chuva,  # Dias sem chuva convertido
+            })
 
+        # Lógica de agrupamento
+        agrupamento_por_municipio = defaultdict(int)
+        agrupamento_por_estado = defaultdict(int)
+
+        for dado in dados_convertidos:
+            estado = dado['Estado']
+            municipio = dado['Municipio']
+
+            # Incrementar contadores
+            agrupamento_por_municipio[(estado, municipio)] += 1
+            agrupamento_por_estado[estado] += 1
+
+        # Formatar resultados de agrupamento
+        agrupamento_municipios = [
+            {
+                'Estado': estado,
+                'Municipio': municipio,
+                'Incidencias': incidencias
+            }
+            for (estado, municipio), incidencias in agrupamento_por_municipio.items()
+        ]
+
+        agrupamento_estados = [
+            {
+                'Estado': estado,
+                'Incidencias': incidencias
+            }
+            for estado, incidencias in agrupamento_por_estado.items()
+        ]
+
+        # Resposta final com dados processados
+        resposta = {
+            'dados': dados_convertidos,
+            'agrupamento_por_municipio': agrupamento_municipios,
+            'agrupamento_por_estado': agrupamento_estados,
+        }
+
+        return JsonResponse(resposta, safe=False)
+
+    except Exception as e:
+        return JsonResponse({'status': 'Erro', 'mensagem': str(e)}, status=500)
